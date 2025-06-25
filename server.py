@@ -1,10 +1,11 @@
 import serial
 import time
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import atexit
 import cv2 # Import OpenCV for camera access
 import base64 # Import base64 for encoding images
+import os
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -150,31 +151,53 @@ def backward(distance_cm):
     else:
         return jsonify({"status": "Error", "message": f"Failed to stop: {message}"}), 500
 
-@app.route('/left/<int:speed>', methods=['POST'])
-def left(speed):
+@app.route('/left/<int:degree>', methods=['POST'])
+def left(degree):
     """Turns the robot left in place at a specified speed."""
-    print(f"Received request: /left/{speed}")
+    print(f"Received request: /left/{degree}")
     # Left turn in place: left wheel backward, right wheel forward
     # Convert integer speed to float for motor command
-    float_speed = float(speed)
-    success, message = send_motor_command_uart(-float_speed, float_speed)
-    if success:
-        return jsonify({"status": "OK", "message": "Turning left in place"}), 200
-    else:
-        return jsonify({"status": "Error", "message": message}), 500
+    
+    duration = degree * (0.65/90)
+    print(f"Calculated duration: {duration:.2f} seconds.")
 
-@app.route('/right/<int:speed>', methods=['POST'])
-def right(speed):
-    """Turns the robot right in place at a specified speed."""
-    print(f"Received request: /right/{speed}")
-    # Right turn in place: left wheel forward, right wheel backward
-    # Convert integer speed to float for motor command
-    float_speed = float(speed)
-    success, message = send_motor_command_uart(float_speed, -float_speed)
+    # Start turning
+    success, message = send_motor_command_uart(-0.3, 0.3)
+    if not success:
+        return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
+
+    time.sleep(duration) # Wait for the calculated duration
+
+    # Stop the robot
+    success, message = send_motor_command_uart(0.0, 0.0)
     if success:
-        return jsonify({"status": "OK", "message": "Turning right in place"}), 200
+        return jsonify({"status": "OK", "message": f"Turned {degree} degrees"}), 200
     else:
-        return jsonify({"status": "Error", "message": message}), 500
+        return jsonify({"status": "Error", "message": f"Failed to stop: {message}"}), 500
+
+@app.route('/right/<int:degree>', methods=['POST'])
+def right(degree):
+    """Turns the robot right in place at a specified speed."""
+    print(f"Received request: /left/{degree}")
+    # Left turn in place: left wheel backward, right wheel forward
+    # Convert integer speed to float for motor command
+    
+    duration = degree * (0.65/90)
+    print(f"Calculated duration: {duration:.2f} seconds.")
+
+    # Start turning
+    success, message = send_motor_command_uart(0.3, -0.3)
+    if not success:
+        return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
+
+    time.sleep(duration) # Wait for the calculated duration
+
+    # Stop the robot
+    success, message = send_motor_command_uart(0.0, 0.0)
+    if success:
+        return jsonify({"status": "OK", "message": f"Turned {degree} degrees"}), 200
+    else:
+        return jsonify({"status": "Error", "message": f"Failed to stop: {message}"}), 500
 
 @app.route('/stop', methods=['POST'])
 def stop():
@@ -189,58 +212,43 @@ def stop():
 @app.route('/camera', methods=['GET'])
 def camera():
     """
-    Captures an image from the connected webcam and returns it as a Base64 string directly.
-    Assumes camera is at /dev/video0.
+    Reads an image file, encodes it in Base64, and returns the Base64 string directly.
     """
-    print("Received request: /camera")
-    cap = None
+    IMAGE_DIRECTORY = "/root/my_live_feed"
+
+    file_path = os.path.join(IMAGE_DIRECTORY, "image-old.jpg")
+
+    # Validate filename to prevent directory traversal attacks
+    if not os.path.abspath(file_path).startswith(os.path.abspath(IMAGE_DIRECTORY)):
+        abort(403)
+
+    if not os.path.exists(file_path):
+        # When not using jsonify, return a string response and status code directly
+        return "Error: File not found.", 404
+    
     try:
-        # Initialize video capture object
-        # '/dev/video0' is the default path for the first webcam on Linux (Raspberry Pi OS)
-        cap = cv2.VideoCapture('/dev/video0')
-
-        # Set resolution (optional, adjust as needed for performance/quality)
-        # These are common resolutions, but check your camera's capabilities
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        # Check if camera opened successfully
-        if not cap.isOpened():
-            print("Error: Could not open camera.")
-            return jsonify({"status": "Error", "message": "Could not open camera."}), 500
-
-        # Read a frame from the camera
-        ret, frame = cap.read()
-
-        if not ret:
-            print("Error: Could not read frame from camera.")
-            return jsonify({"status": "Error", "message": "Could not read frame."}), 500
-
-        # Encode the frame as a JPEG image in memory
-        # 'imencode' returns a tuple: (boolean success, numpy array of bytes)
-        ret, buffer = cv2.imencode('.jpg', frame)
-
-        if not ret:
-            print("Error: Could not encode image to JPEG.")
-            return jsonify({"status": "Error", "message": "Could not encode image."}), 500
-
-        # Convert the byte array to a Base64 string
-        jpg_as_text = base64.b64encode(buffer).decode('utf-8')
-
-        # Return the Base64 string directly
-        return jpg_as_text, 200, {'Content-Type': 'text/plain'}
+        with open(file_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Determine the MIME type if you were to send it in a header,
+        # but for a plain string return, it's often 'text/plain'.
+        # If the client needs the image type, they might need to derive it
+        # from the filename or you could add a custom header.
+        
+        # Return the Base64 string directly.
+        # By default, Flask will set Content-Type to 'text/html' for strings,
+        # or 'text/plain' if it's a very simple string.
+        # To be explicit about the content type:
+        return Response(encoded_string, mimetype='text/plain')
+        
+        # Alternatively, if you just want the simplest possible return:
+        # return encoded_string
 
     except Exception as e:
-        print(f"An unexpected error occurred during camera capture: {e}")
-        return jsonify({"status": "Error", "message": f"Camera error: {e}"}), 500
-    finally:
-        # Release the camera object to free resources
-        if cap is not None and cap.isOpened():
-            cap.release()
-            print("Camera released.")
-
+        return f"Error: Could not process file: {e}", 500
 
 # --- Main execution block ---
+
 if __name__ == '__main__':
     # Initialize serial connection here, before running the Flask app
     init_serial_connection()
@@ -248,4 +256,3 @@ if __name__ == '__main__':
     # host='0.0.0.0' makes it accessible from other devices on the network
     # debug=True allows for auto-reloading and better error messages during development
     app.run(host='0.0.0.0', port=5000, debug=True)
-
