@@ -37,10 +37,12 @@ Setup Skupper between OCP and Raspi/Podman node
 	- skupper link create ocp-token.yaml
 	- Check with skupper link status on both sides
 	- Expose service running on 5000 (non Podman)
-		- skupper expose host host.containers.internal --address <hostname> --port 5000
+		- skupper expose host host.containers.internal --address darklord --port 5000
 - On OCP from laptop
 	- Expose the Skupper service as OCP service
 		- skupper service create darklord 5000
+ 
+Note: "darklord" is the internal name of the Skupper service.  
 
 Make sure service runs and test from OCP terminal, e.g.:
 curl darklord.robot.svc.cluster.local:5000
