@@ -71,10 +71,10 @@ def test_robot_connection():
     try:
         # Try to send a stop command to test connectivity
         # WAVE ROVER expects GET request to /js?json=<command>
-        command_json = json.dumps({"T": 1, "L": 0.0, "R": 0.0})
-        url = f"{ROBOT_HTTP_ENDPOINT}?json={command_json}"
-        print(f"Testing connection to {url}...")
-        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        command_json = json.dumps({"T": 1, "L": 0.0, "R": 0.0}, separators=(',', ':'))
+        print(f"Testing connection to {ROBOT_HTTP_ENDPOINT}...")
+        response = requests.get(ROBOT_HTTP_ENDPOINT, params={'json': command_json}, timeout=HTTP_TIMEOUT)
+        print(f"Connection test URL: {response.url}")
         print(f"Connection test response: status={response.status_code}, body={response.text[:200]}")
         if response.status_code == 200:
             print(f"Successfully connected to WAVE ROVER at {ROBOT_IP}")
@@ -102,12 +102,12 @@ def send_motor_command_http(left_speed, right_speed):
 
     try:
         # WAVE ROVER expects GET request to /js?json=<command>
-        command_json = json.dumps(command_payload)
-        url = f"{ROBOT_HTTP_ENDPOINT}?json={command_json}"
+        # Use params to properly URL-encode the JSON string
+        command_json = json.dumps(command_payload, separators=(',', ':'))  # Compact JSON
+        response = requests.get(ROBOT_HTTP_ENDPOINT, params={'json': command_json}, timeout=HTTP_TIMEOUT)
         
-        response = requests.get(url, timeout=HTTP_TIMEOUT)
         print(f"Command sent via HTTP: {command_json}")
-        print(f"URL: {url}")
+        print(f"Full URL: {response.url}")
         print(f"Response status: {response.status_code}, body: {response.text[:200]}")
         
         if response.status_code == 200:
