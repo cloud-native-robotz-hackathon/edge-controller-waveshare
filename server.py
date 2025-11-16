@@ -58,44 +58,49 @@ def init_camera():
         
         # Check if device exists
         if not os.path.exists(CAMERA_DEVICE):
-            print(f"ERROR: Camera device {CAMERA_DEVICE} does not exist!")
+            print(f"WARNING: Camera device {CAMERA_DEVICE} does not exist!")
             video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
             print(f"Available video devices: {video_devices}")
+            print("Will continue to scan all available video devices...")
+            # Don't return - continue to Method 4 which will scan all devices
             camera = None
-            return
         
-        # Check permissions
-        import stat
-        device_stat = os.stat(CAMERA_DEVICE)
-        device_mode = stat.filemode(device_stat.st_mode)
-        print(f"Camera device permissions: {device_mode}")
+        # Check permissions (only if device exists)
+        if os.path.exists(CAMERA_DEVICE):
+            import stat
+            device_stat = os.stat(CAMERA_DEVICE)
+            device_mode = stat.filemode(device_stat.st_mode)
+            print(f"Camera device permissions: {device_mode}")
         
         # Try different methods to open camera
         # On AlmaLinux/RHEL 9, sometimes need to use device index or different backends
         camera = None
         
-        # Method 1: Try with device path and V4L2 backend
-        print("Trying method 1: Device path with V4L2 backend...")
-        try:
-            camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
-            if camera.isOpened():
-                print("✓ Successfully opened with V4L2 backend")
-            else:
-                print("  Failed with V4L2 backend")
+        # Method 1: Try with device path and V4L2 backend (only if device exists)
+        if os.path.exists(CAMERA_DEVICE):
+            print("Trying method 1: Device path with V4L2 backend...")
+            try:
+                camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
+                if camera.isOpened():
+                    print("✓ Successfully opened with V4L2 backend")
+                else:
+                    print("  Failed with V4L2 backend")
+                    if camera:
+                        camera.release()
+                    camera = None
+            except Exception as e:
+                print(f"  Exception: {e}")
                 if camera:
-                    camera.release()
+                    try:
+                        camera.release()
+                    except:
+                        pass
                 camera = None
-        except Exception as e:
-            print(f"  Exception: {e}")
-            if camera:
-                try:
-                    camera.release()
-                except:
-                    pass
-            camera = None
+        else:
+            print("Skipping method 1: Device does not exist")
         
-        # Method 2: Try with device index (extract number from /dev/video0 -> 0)
-        if camera is None or not camera.isOpened():
+        # Method 2: Try with device index (extract number from /dev/video0 -> 0) - only if device exists
+        if (camera is None or not camera.isOpened()) and os.path.exists(CAMERA_DEVICE):
             print("Trying method 2: Device index...")
             try:
                 device_index = int(CAMERA_DEVICE.replace('/dev/video', ''))
@@ -117,8 +122,8 @@ def init_camera():
                         pass
                 camera = None
         
-        # Method 3: Try with ANY backend
-        if camera is None or not camera.isOpened():
+        # Method 3: Try with ANY backend (only if device exists)
+        if (camera is None or not camera.isOpened()) and os.path.exists(CAMERA_DEVICE):
             print("Trying method 3: ANY backend...")
             try:
                 camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_ANY)
@@ -693,12 +698,27 @@ def camera_endpoint():
     # If camera is None, try to reinitialize it (in case it failed at startup)
     if camera is None:
         print("Camera is None, attempting to reinitialize...")
-        init_camera()
+        try:
+            init_camera()
+        except Exception as e:
+            print(f"Exception during camera reinitialization: {e}")
+            import traceback
+            traceback.print_exc()
+        
         if camera is None:
-            return jsonify({
+            # Provide more detailed error information
+            error_details = {
                 "error": "Camera not started or failed to initialize.",
-                "details": "Check server logs for initialization errors. PiSP cameras may require libcamera tools."
-            }), 500
+                "details": "Check server logs for initialization errors.",
+                "troubleshooting": [
+                    "PiSP cameras on AlmaLinux 9 may not be accessible via standard OpenCV/V4L2",
+                    "libcamera-still is not available in AlmaLinux repos",
+                    "Try: dnf install libcamera-v4l2 (provides V4L2 compatibility layer)",
+                    "Or check if Python libcamera bindings are available",
+                    "Check server startup logs for detailed initialization attempts"
+                ]
+            }
+            return jsonify(error_details), 500
 
     try:
         # Use external camera tools or Python libcamera for CSI cameras on AlmaLinux/RHEL 9
