@@ -213,21 +213,23 @@ def left(degree):
     
     # Left turn in place: left wheel backward, right wheel forward
     # Duration calculation accounts for acceleration/deceleration and HTTP latency
-    # Observations show short turns need proportionally more time
+    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 1.5× time)
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
-    # For short turns, overhead dominates - scale it inversely with degree
-    # For 45°: needs ~1.5x the base time to account for overhead
-    # For 90°: overhead is less significant
-    if degree <= 45:
-        # Short turns need significant overhead compensation
-        # Scale factor: 90/degree gives more time for shorter turns
-        scale_factor = 1.0 + (90.0 / degree) * 0.15
+    # For short turns, overhead dominates - need much more aggressive scaling
+    # If 45° only turns 30°, we need 45/30 = 1.5× the time
+    if degree <= 30:
+        # Very short turns: need 2× time
+        scale_factor = 2.0
+        duration = base_duration * scale_factor + overhead
+    elif degree <= 45:
+        # 45° needs 1.5× time to actually turn 45°
+        scale_factor = 1.5
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
-        # Medium turns need moderate overhead
-        scale_factor = 1.0 + (90.0 / degree) * 0.1
+        # Medium turns: moderate scaling
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.3
         duration = base_duration * scale_factor + overhead
     else:
         # Longer turns: fixed overhead
@@ -241,10 +243,13 @@ def left(degree):
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
     
-    # Wait for the calculated duration
-    time.sleep(duration)
+    # Small delay to ensure command is processed (HTTP latency)
+    time.sleep(0.02)
+    
+    # Wait for the calculated duration (minus the initial delay)
+    time.sleep(max(0, duration - 0.02))
     elapsed = time.time() - start_time
-    print(f"Actual turn time: {elapsed:.3f} seconds")
+    print(f"Actual turn time: {elapsed:.3f} seconds (target: {duration:.3f}s)")
 
     # Stop the robot
     success, message = send_motor_command_http(0.0, 0.0)
@@ -262,21 +267,23 @@ def right(degree):
     
     # Right turn in place: left wheel forward, right wheel backward
     # Duration calculation accounts for acceleration/deceleration and HTTP latency
-    # Observations show short turns need proportionally more time
+    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 1.5× time)
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
-    # For short turns, overhead dominates - scale it inversely with degree
-    # For 45°: needs ~1.5x the base time to account for overhead
-    # For 90°: overhead is less significant
-    if degree <= 45:
-        # Short turns need significant overhead compensation
-        # Scale factor: 90/degree gives more time for shorter turns
-        scale_factor = 1.0 + (90.0 / degree) * 0.15
+    # For short turns, overhead dominates - need much more aggressive scaling
+    # If 45° only turns 30°, we need 45/30 = 1.5× the time
+    if degree <= 30:
+        # Very short turns: need 2× time
+        scale_factor = 2.0
+        duration = base_duration * scale_factor + overhead
+    elif degree <= 45:
+        # 45° needs 1.5× time to actually turn 45°
+        scale_factor = 1.5
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
-        # Medium turns need moderate overhead
-        scale_factor = 1.0 + (90.0 / degree) * 0.1
+        # Medium turns: moderate scaling
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.3
         duration = base_duration * scale_factor + overhead
     else:
         # Longer turns: fixed overhead
@@ -290,10 +297,13 @@ def right(degree):
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
     
-    # Wait for the calculated duration
-    time.sleep(duration)
+    # Small delay to ensure command is processed (HTTP latency)
+    time.sleep(0.02)
+    
+    # Wait for the calculated duration (minus the initial delay)
+    time.sleep(max(0, duration - 0.02))
     elapsed = time.time() - start_time
-    print(f"Actual turn time: {elapsed:.3f} seconds")
+    print(f"Actual turn time: {elapsed:.3f} seconds (target: {duration:.3f}s)")
 
     # Stop the robot
     success, message = send_motor_command_http(0.0, 0.0)
