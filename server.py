@@ -198,19 +198,26 @@ def backward(distance_cm):
 @app.route('/left/<int:degree>', methods=['POST'])
 def left(degree):
     """Turns the robot left in place at a specified speed."""
-    print(f"Received request: /left/{degree}")
-    # Left turn in place: left wheel backward, right wheel forward
-    # Convert integer speed to float for motor command
+    print(f"Received request: /left/{degree} degrees")
+    if degree <= 0:
+        return jsonify({"status": "Error", "message": "Degree must be positive"}), 400
     
-    duration = degree * (0.65/90)
-    print(f"Calculated duration: {duration:.2f} seconds.")
+    # Left turn in place: left wheel backward, right wheel forward
+    # Duration calculation: 0.65 seconds per 90 degrees
+    # Formula: duration = (degree / 90) * 0.65
+    duration = (degree / 90.0) * 0.65
+    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees.")
 
     # Start turning
+    start_time = time.time()
     success, message = send_motor_command_http(-0.3, 0.3)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
-
-    time.sleep(duration) # Wait for the calculated duration
+    
+    # Wait for the calculated duration
+    time.sleep(duration)
+    elapsed = time.time() - start_time
+    print(f"Actual turn time: {elapsed:.3f} seconds")
 
     # Stop the robot
     success, message = send_motor_command_http(0.0, 0.0)
@@ -222,19 +229,26 @@ def left(degree):
 @app.route('/right/<int:degree>', methods=['POST'])
 def right(degree):
     """Turns the robot right in place at a specified speed."""
-    print(f"Received request: /right/{degree}")
-    # Left turn in place: left wheel backward, right wheel forward
-    # Convert integer speed to float for motor command
+    print(f"Received request: /right/{degree} degrees")
+    if degree <= 0:
+        return jsonify({"status": "Error", "message": "Degree must be positive"}), 400
     
-    duration = degree * (0.65/90)
-    print(f"Calculated duration: {duration:.2f} seconds.")
+    # Right turn in place: left wheel forward, right wheel backward
+    # Duration calculation: 0.65 seconds per 90 degrees
+    # Formula: duration = (degree / 90) * 0.65
+    duration = (degree / 90.0) * 0.65
+    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees.")
 
     # Start turning
+    start_time = time.time()
     success, message = send_motor_command_http(0.3, -0.3)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
-
-    time.sleep(duration) # Wait for the calculated duration
+    
+    # Wait for the calculated duration
+    time.sleep(duration)
+    elapsed = time.time() - start_time
+    print(f"Actual turn time: {elapsed:.3f} seconds")
 
     # Stop the robot
     success, message = send_motor_command_http(0.0, 0.0)
