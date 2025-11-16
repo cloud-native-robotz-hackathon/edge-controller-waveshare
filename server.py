@@ -6,7 +6,6 @@ import atexit
 import cv2
 import base64
 import os
-from picamera2 import Picamera2
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -24,21 +23,46 @@ HTTP_TIMEOUT = 2.0  # Timeout in seconds for HTTP requests
 ROBOT_SPEED_CM_PER_SECOND = 10.0
 DEFAULT_DRIVE_SPEED = 0.3
 
-# Initialize picam2 to None globally
-picam2 = None
+# --- Camera Configuration ---
+# Camera device path (default /dev/video0 for first USB camera or CSI camera via v4l2)
+# Can be configured via environment variable CAMERA_DEVICE
+CAMERA_DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+
+# Initialize camera to None globally
+camera = None
 
 def init_camera():
-    """Initializes and starts the Picamera2 instance."""
-    global picam2
+    """Initializes the camera using OpenCV VideoCapture (v4l2 compatible for RHEL 9)."""
+    global camera
     try:
-        picam2 = Picamera2()
-        camera_config = picam2.create_still_configuration(main={"size": (640, 480)}, lores={"size": (320, 240)}, display="lores")
-        picam2.configure(camera_config)
-        picam2.start()
-        print("Picamera2 started successfully.")
+        # Try to open camera device
+        camera = cv2.VideoCapture(CAMERA_DEVICE)
+        
+        if not camera.isOpened():
+            print(f"Failed to open camera device {CAMERA_DEVICE}")
+            camera = None
+            return
+        
+        # Set camera resolution
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        
+        # Read a test frame to ensure camera is working
+        ret, frame = camera.read()
+        if not ret:
+            print(f"Failed to read test frame from camera {CAMERA_DEVICE}")
+            camera.release()
+            camera = None
+            return
+        
+        print(f"Camera {CAMERA_DEVICE} started successfully (resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT})")
     except Exception as e:
-        print(f"Failed to start Picamera2: {e}")
-        picam2 = None # Ensure picam2 is None if initialization fails
+        print(f"Failed to start camera {CAMERA_DEVICE}: {e}")
+        if camera is not None:
+            camera.release()
+        camera = None
 
 # --- Helper Functions for WiFi HTTP Communication ---
 def test_robot_connection():
@@ -94,10 +118,10 @@ def cleanup():
     send_motor_command_http(0.0, 0.0)
     print("Robot stopped.")
 
-    global picam2
-    if picam2 and picam2.started:
-        picam2.stop()
-        print("Picamera2 stopped.")
+    global camera
+    if camera is not None and camera.isOpened():
+        camera.release()
+        print("Camera released.")
 
 atexit.register(cleanup)
 
@@ -236,21 +260,24 @@ def camera2():
         return f"Error: Could not process file: {e}", 500
 
 @app.route('/camera', methods=['GET'])
-def camera():
-    """Captures an image from Picamera2 and returns it as a Base64 encoded JSON."""
-    global picam2
-    if not picam2 or not picam2.started:
+def camera_endpoint():
+    """Captures an image from the camera using OpenCV VideoCapture and returns it as Base64 encoded."""
+    global camera
+    if camera is None or not camera.isOpened():
         return jsonify({"error": "Camera not started or failed to initialize."}), 500
 
     try:
-        # Capture the image as a NumPy array in BGR format
-        image_array_bgr = picam2.capture_array("main")
+        # Read frame from camera (OpenCV returns BGR format)
+        ret, frame = camera.read()
+        
+        if not ret or frame is None:
+            return jsonify({"error": "Failed to capture frame from camera."}), 500
 
-        # --- FIX: Convert the image from BGR to RGB ---
-        image_array_rgb = cv2.cvtColor(image_array_bgr, cv2.COLOR_BGR2RGB)
+        # Convert BGR to RGB for proper color display
+        image_array_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Encode the corrected RGB image to an in-memory JPEG byte stream
-        success, buffer = cv2.imencode('.jpg', image_array_rgb)
+        # Encode the RGB image to an in-memory JPEG byte stream
+        success, buffer = cv2.imencode('.jpg', image_array_rgb, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         if not success:
             return jsonify({"error": "Failed to encode image to JPEG."}), 500
