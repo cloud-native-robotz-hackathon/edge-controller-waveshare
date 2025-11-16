@@ -821,7 +821,9 @@ def camera_endpoint():
             
             try:
                 # Build command based on tool
-                if tool_cmd == "cam":
+                # Check if tool_cmd is "cam" (could be full path like /usr/bin/cam or just "cam")
+                tool_basename = os.path.basename(tool_cmd) if tool_cmd else ""
+                if tool_basename == "cam" or tool_cmd == "cam":
                     # cam tool from libcamera-tools
                     # Syntax: cam -c <camera> -C <count> -F <file> -s role=still,width=W,height=H
                     # Use camera index 0 (first camera) or we could list cameras first
@@ -832,7 +834,7 @@ def camera_endpoint():
                         '-F', tmp_path,  # Output file
                         '-s', f'role=still,width={CAMERA_WIDTH},height={CAMERA_HEIGHT}'  # Stream configuration
                     ]
-                elif tool_cmd in ["libcamera-still", "rpicam-still"]:
+                elif tool_basename in ["libcamera-still", "rpicam-still"] or tool_cmd in ["libcamera-still", "rpicam-still"]:
                     # Modern libcamera/rpicam tools
                     cmd = [
                         tool_cmd,
@@ -842,7 +844,7 @@ def camera_endpoint():
                         '--timeout', '1000',  # 1 second timeout
                         '--nopreview'
                     ]
-                else:
+                elif tool_basename == "raspistill" or tool_cmd == "raspistill":
                     # Legacy raspistill
                     cmd = [
                         tool_cmd,
@@ -852,6 +854,12 @@ def camera_endpoint():
                         '-t', '1000',  # 1 second timeout
                         '-n'  # No preview
                     ]
+                else:
+                    # Unknown tool - return error
+                    return jsonify({
+                        "error": f"Unknown camera tool: {tool_cmd}",
+                        "details": "Tool detected but command format not implemented"
+                    }), 500
                 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
                 
