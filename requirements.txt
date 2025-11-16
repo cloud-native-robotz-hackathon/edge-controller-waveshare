@@ -6,6 +6,5 @@ Jinja2==3.1.6
 MarkupSafe==3.0.2
 numpy==2.3.0
 opencv-python==4.11.0.86
-pyserial==3.5
-wave-rover-serial==0.5
+requests==2.31.0
 Werkzeug==3.1.3

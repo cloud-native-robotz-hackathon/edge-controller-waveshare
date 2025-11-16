@@ -1,4 +1,4 @@
-import serial
+import requests
 import time
 import json
 from flask import Flask, request, jsonify, Response
@@ -12,9 +12,13 @@ from picamera2 import Picamera2
 app = Flask(__name__)
 print("Waveshare Rover Flask Edge Controller has started.")
 
-# --- Serial Port Configuration ---
-SERIAL_PORT = '/dev/ttyAMA0'
-BAUD_RATE = 115200
+# --- WiFi Configuration ---
+# WAVE ROVER ESP32 creates a WiFi hotspot on startup
+# Default IP is 192.168.4.1 when in hotspot mode
+# Can be configured via environment variable ROBOT_IP
+ROBOT_IP = os.environ.get('ROBOT_IP', '192.168.4.1')
+ROBOT_HTTP_ENDPOINT = f'http://{ROBOT_IP}'
+HTTP_TIMEOUT = 2.0  # Timeout in seconds for HTTP requests
 
 # --- Robot Movement Configuration ---
 ROBOT_SPEED_CM_PER_SECOND = 10.0
@@ -22,9 +26,6 @@ DEFAULT_DRIVE_SPEED = 0.3
 
 # Initialize picam2 to None globally
 picam2 = None
-
-# Initialize serial connection globally
-ser = None
 
 def init_camera():
     """Initializes and starts the Picamera2 instance."""
@@ -39,59 +40,59 @@ def init_camera():
         print(f"Failed to start Picamera2: {e}")
         picam2 = None # Ensure picam2 is None if initialization fails
 
-# --- Helper Functions for Serial Communication ---
-def init_serial_connection():
-    """Initializes the global serial connection."""
-    global ser
+# --- Helper Functions for WiFi HTTP Communication ---
+def test_robot_connection():
+    """Tests the connection to the WAVE ROVER via WiFi."""
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        time.sleep(2)
-        if ser.is_open:
-            print(f"Serial port {SERIAL_PORT} opened successfully.")
+        # Try to send a stop command to test connectivity
+        response = requests.post(ROBOT_HTTP_ENDPOINT, 
+                                json={"T": 1, "L": 0.0, "R": 0.0},
+                                timeout=HTTP_TIMEOUT)
+        if response.status_code == 200:
+            print(f"Successfully connected to WAVE ROVER at {ROBOT_HTTP_ENDPOINT}")
+            return True
         else:
-            print(f"Failed to open serial port {SERIAL_PORT}.")
-            ser = None
-    except serial.SerialException as e:
-        print(f"Failed to open serial port {SERIAL_PORT}: {e}")
-        ser = None
-    except Exception as e:
-        print(f"An unexpected error occurred during serial init: {e}")
-        ser = None
+            print(f"WAVE ROVER responded with status code {response.status_code}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to connect to WAVE ROVER at {ROBOT_HTTP_ENDPOINT}: {e}")
+        print("Make sure the robot is powered on and connected to its WiFi hotspot.")
+        return False
 
-def send_motor_command_uart(left_speed, right_speed):
-    """Sends a motor control command to the Waveshare Rover via UART."""
-    if ser is None or not ser.is_open:
-        print("Error: Serial port not open. Cannot send command.")
-        return False, "Serial port not open."
-
+def send_motor_command_http(left_speed, right_speed):
+    """Sends a motor control command to the Waveshare Rover via WiFi HTTP."""
     command_payload = {
-        "T": "1",
+        "T": 1,  # CMD_SPEED_CTRL command type
         "L": float(left_speed),
         "R": float(right_speed)
     }
 
-    json_string = json.dumps(command_payload)
-    command_bytes = (json_string + '\n').encode('utf-8')
-
     try:
-        ser.write(command_bytes)
-        print(f"Command sent via UART: {json_string}")
-        return True, "OK"
-    except serial.SerialException as e:
-        print(f"Error sending command over UART: {e}")
-        return False, f"Serial communication error: {e}"
+        response = requests.post(ROBOT_HTTP_ENDPOINT,
+                                json=command_payload,
+                                timeout=HTTP_TIMEOUT)
+        print(f"Command sent via HTTP: {json.dumps(command_payload)}")
+        
+        if response.status_code == 200:
+            return True, "OK"
+        else:
+            return False, f"HTTP error: {response.status_code} - {response.text}"
+    except requests.exceptions.Timeout:
+        print(f"Timeout sending command to {ROBOT_HTTP_ENDPOINT}")
+        return False, f"Request timeout after {HTTP_TIMEOUT} seconds"
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error to {ROBOT_HTTP_ENDPOINT}: {e}")
+        return False, f"Connection error: {e}"
     except Exception as e:
-        print(f"An unexpected error occurred during command send: {e}")
+        print(f"An unexpected error occurred during HTTP command send: {e}")
         return False, f"Unexpected error: {e}"
 
 # --- Lifecycle Management ---
 def cleanup():
-    """Closes serial and camera resources when the application exits."""
-    global ser
-    if ser and ser.is_open:
-        send_motor_command_uart(0.0, 0.0) # Ensure robot stops
-        ser.close()
-        print("Serial port closed.")
+    """Stops robot and closes camera resources when the application exits."""
+    # Ensure robot stops before exiting
+    send_motor_command_http(0.0, 0.0)
+    print("Robot stopped.")
 
     global picam2
     if picam2 and picam2.started:
@@ -118,14 +119,14 @@ def forward(distance_cm):
     print(f"Calculated duration: {duration:.2f} seconds.")
 
     # Start moving forward
-    success, message = send_motor_command_uart(DEFAULT_DRIVE_SPEED, DEFAULT_DRIVE_SPEED)
+    success, message = send_motor_command_http(DEFAULT_DRIVE_SPEED, DEFAULT_DRIVE_SPEED)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
 
     time.sleep(duration) # Wait for the calculated duration
 
     # Stop the robot
-    success, message = send_motor_command_uart(0.0, 0.0)
+    success, message = send_motor_command_http(0.0, 0.0)
     if success:
         return jsonify({"status": "OK", "message": f"Moved forward {distance_cm} cm"}), 200
     else:
@@ -142,14 +143,14 @@ def backward(distance_cm):
     print(f"Calculated duration: {duration:.2f} seconds.")
 
     # Start moving backward (use negative speed)
-    success, message = send_motor_command_uart(-DEFAULT_DRIVE_SPEED, -DEFAULT_DRIVE_SPEED)
+    success, message = send_motor_command_http(-DEFAULT_DRIVE_SPEED, -DEFAULT_DRIVE_SPEED)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
 
     time.sleep(duration) # Wait for the calculated duration
 
     # Stop the robot
-    success, message = send_motor_command_uart(0.0, 0.0)
+    success, message = send_motor_command_http(0.0, 0.0)
     if success:
         return jsonify({"status": "OK", "message": f"Moved backward {distance_cm} cm"}), 200
     else:
@@ -166,14 +167,14 @@ def left(degree):
     print(f"Calculated duration: {duration:.2f} seconds.")
 
     # Start turning
-    success, message = send_motor_command_uart(-0.3, 0.3)
+    success, message = send_motor_command_http(-0.3, 0.3)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
 
     time.sleep(duration) # Wait for the calculated duration
 
     # Stop the robot
-    success, message = send_motor_command_uart(0.0, 0.0)
+    success, message = send_motor_command_http(0.0, 0.0)
     if success:
         return jsonify({"status": "OK", "message": f"Turned {degree} degrees"}), 200
     else:
@@ -182,7 +183,7 @@ def left(degree):
 @app.route('/right/<int:degree>', methods=['POST'])
 def right(degree):
     """Turns the robot right in place at a specified speed."""
-    print(f"Received request: /left/{degree}")
+    print(f"Received request: /right/{degree}")
     # Left turn in place: left wheel backward, right wheel forward
     # Convert integer speed to float for motor command
     
@@ -190,14 +191,14 @@ def right(degree):
     print(f"Calculated duration: {duration:.2f} seconds.")
 
     # Start turning
-    success, message = send_motor_command_uart(0.3, -0.3)
+    success, message = send_motor_command_http(0.3, -0.3)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
 
     time.sleep(duration) # Wait for the calculated duration
 
     # Stop the robot
-    success, message = send_motor_command_uart(0.0, 0.0)
+    success, message = send_motor_command_http(0.0, 0.0)
     if success:
         return jsonify({"status": "OK", "message": f"Turned {degree} degrees"}), 200
     else:
@@ -207,7 +208,7 @@ def right(degree):
 def stop():
     """Stops the robot."""
     print("Received request: /stop")
-    success, message = send_motor_command_uart(0.0, 0.0)
+    success, message = send_motor_command_http(0.0, 0.0)
     if success:
         return jsonify({"status": "OK", "message": "Robot stopped"}), 200
     else:
@@ -266,7 +267,8 @@ def camera():
 # --- Main execution block ---
 if __name__ == '__main__':
     # Initialize hardware connections here
-    init_serial_connection()
+    print(f"Connecting to WAVE ROVER at {ROBOT_HTTP_ENDPOINT}")
+    test_robot_connection()
     init_camera()
 
     # The 'use_reloader=False' is crucial for preventing the script from running twice.
