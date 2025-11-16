@@ -823,7 +823,8 @@ def camera_endpoint():
                 # Build command based on tool
                 # Check if tool_cmd is "cam" (could be full path like /usr/bin/cam or just "cam")
                 tool_basename = os.path.basename(tool_cmd) if tool_cmd else ""
-                if tool_basename == "cam" or tool_cmd == "cam":
+                print(f"DEBUG: tool_cmd={tool_cmd}, tool_basename={tool_basename}, tool_type={tool_type}")
+                if tool_basename == "cam" or tool_cmd == "cam" or tool_type == "cam":
                     # cam tool from libcamera-tools
                     # Syntax: cam -c <camera> -C <count> -F <file> -s role=still,width=W,height=H
                     # Use camera index 0 (first camera) or we could list cameras first
