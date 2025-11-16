@@ -6,6 +6,8 @@ import atexit
 import cv2
 import base64
 import os
+import subprocess
+import tempfile
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -38,15 +40,18 @@ TURN_SPEED = 0.4  # Turn speed (increased from 0.3 to reduce slip - higher speed
 # --- Camera Configuration ---
 # Camera device path (default /dev/video0 for first USB camera or CSI camera via v4l2)
 # Can be configured via environment variable CAMERA_DEVICE
+# For CSI cameras on AlmaLinux/RHEL 9, may need to use libcamera-still as fallback
 CAMERA_DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
+USE_LIBCAMERA = False  # Set to True if OpenCV can't access CSI camera directly
 
 # Initialize camera to None globally
 camera = None
+camera_tool_path = None  # Store full path to camera tool if using external tool
 
 def init_camera():
-    """Initializes the camera using OpenCV VideoCapture (v4l2 compatible for RHEL 9)."""
+    """Initializes the camera using OpenCV VideoCapture (v4l2 compatible for AlmaLinux/RHEL 9)."""
     global camera
     try:
         print(f"Attempting to initialize camera at {CAMERA_DEVICE}...")
@@ -66,7 +71,7 @@ def init_camera():
         print(f"Camera device permissions: {device_mode}")
         
         # Try different methods to open camera
-        # On RHEL 9, sometimes need to use device index or different backends
+        # On AlmaLinux/RHEL 9, sometimes need to use device index or different backends
         camera = None
         
         # Method 1: Try with device path and V4L2 backend
@@ -137,47 +142,211 @@ def init_camera():
         if camera is None or not camera.isOpened():
             print("Trying method 4: Scanning all video devices...")
             video_devices = sorted([f for f in os.listdir('/dev') if f.startswith('video')])
+            print(f"  Found {len(video_devices)} video devices to test")
+            
+            # First, try to identify capture devices using sysfs and v4l2-ctl
+            capture_devices = []
+            # Check sysfs for device names
+            print("  Checking device info from sysfs...")
             for video_dev in video_devices:
                 dev_path = f'/dev/{video_dev}'
-                print(f"  Trying {dev_path}...")
+                dev_num = video_dev.replace('video', '')
+                sysfs_name = f'/sys/class/video4linux/video{dev_num}/name'
+                if os.path.exists(sysfs_name):
+                    try:
+                        with open(sysfs_name, 'r') as f:
+                            device_name = f.read().strip()
+                            print(f"    {dev_path}: {device_name}")
+                            # Look for camera-related names
+                            # PiSP Backend input devices are the camera capture devices
+                            if any(keyword in device_name.lower() for keyword in ['camera', 'isp', 'pisp', 'capture', 'imx', 'pispbe-input']):
+                                capture_devices.append(dev_path)
+                                print(f"      -> Potential camera device")
+                                # Prioritize pispbe-input devices
+                                if 'pispbe-input' in device_name.lower():
+                                    # Move to front of list
+                                    if dev_path in capture_devices:
+                                        capture_devices.remove(dev_path)
+                                    capture_devices.insert(0, dev_path)
+                                    print(f"        -> PiSP input device (camera) - highest priority")
+                    except:
+                        pass
+            
+            # Also try v4l2-ctl if available
+            try:
+                result = subprocess.run(['which', 'v4l2-ctl'], capture_output=True, text=True, timeout=1)
+                if result.returncode == 0:
+                    print("  Checking device capabilities with v4l2-ctl...")
+                    for video_dev in video_devices:
+                        dev_path = f'/dev/{video_dev}'
+                        if dev_path not in capture_devices:  # Don't check twice
+                            try:
+                                cap_result = subprocess.run(['v4l2-ctl', '--device', dev_path, '--all'],
+                                                           capture_output=True, text=True, timeout=1)
+                                if 'Video Capture' in cap_result.stdout:
+                                    if dev_path not in capture_devices:
+                                        capture_devices.append(dev_path)
+                                        print(f"    {dev_path}: Video Capture device (from v4l2-ctl)")
+                            except:
+                                pass
+            except:
+                pass
+            
+            if capture_devices:
+                print(f"  Found {len(capture_devices)} potential capture devices, testing those first...")
+                # Test capture devices first
+                video_devices = [d.replace('/dev/', '') for d in capture_devices] + \
+                               [d for d in video_devices if f'/dev/{d}' not in capture_devices]
+            else:
+                print("  No obvious capture devices found, will test all devices...")
+            for video_dev in video_devices:
+                dev_path = f'/dev/{video_dev}'
+                print(f"  Trying {dev_path}...", end=' ', flush=True)
+                test_cam = None
                 try:
                     test_cam = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
                     if test_cam.isOpened():
-                        # Try to read a frame to verify it's actually a camera
-                        ret, test_frame = test_cam.read()
-                        if ret and test_frame is not None:
-                            print(f"✓ Found working camera at {dev_path}")
-                            camera = test_cam
-                            # Update CAMERA_DEVICE to the working one
-                            global CAMERA_DEVICE
-                            CAMERA_DEVICE = dev_path
-                            break
+                        # Set buffer size to 1 to avoid stale frames
+                        test_cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        # Set timeout for frame read
+                        test_cam.set(cv2.CAP_PROP_FPS, 30)
+                        
+                        # For PiSP cameras, try setting format first
+                        # Try MJPEG format which is commonly supported
+                        try:
+                            test_cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                        except:
+                            pass
+                        
+                        # Try grab() with timeout - use threading to avoid blocking
+                        import threading
+                        grabbed = False
+                        grab_exception = None
+                        
+                        def try_grab():
+                            nonlocal grabbed, grab_exception
+                            try:
+                                # Try multiple times with short delays for PiSP cameras
+                                for _ in range(3):
+                                    grabbed = test_cam.grab()
+                                    if grabbed:
+                                        break
+                                    time.sleep(0.1)
+                            except Exception as e:
+                                grab_exception = e
+                        
+                        grab_thread = threading.Thread(target=try_grab)
+                        grab_thread.daemon = True
+                        grab_thread.start()
+                        grab_thread.join(timeout=1.0)  # 1 second timeout (reduced)
+                        
+                        if grab_thread.is_alive():
+                            print("timeout")
+                            test_cam.release()
+                            continue
+                        
+                        if grab_exception:
+                            print(f"exception: {grab_exception}")
+                            test_cam.release()
+                            continue
+                        
+                        if grabbed:
+                            # If grab succeeded, try retrieve
+                            ret, test_frame = test_cam.retrieve()
+                            if ret and test_frame is not None and test_frame.size > 0:
+                                print(f"✓ WORKING CAMERA!")
+                                camera = test_cam
+                                # Update CAMERA_DEVICE to the working one
+                                global CAMERA_DEVICE
+                                CAMERA_DEVICE = dev_path
+                                break
+                            else:
+                                print("grabbed but no frame")
+                                test_cam.release()
                         else:
+                            print("cannot grab")
                             test_cam.release()
                     else:
+                        print("cannot open")
                         if test_cam:
                             test_cam.release()
                 except Exception as e:
-                    print(f"    Exception with {dev_path}: {e}")
-                    if 'test_cam' in locals():
+                    print(f"exception: {e}")
+                    if test_cam:
                         try:
                             test_cam.release()
                         except:
                             pass
         
-        if camera is None or not camera.isOpened():
-            print(f"ERROR: Failed to open camera device {CAMERA_DEVICE} with any backend")
+        # Method 5: Try alternative camera tools for CSI cameras on AlmaLinux/RHEL 9
+        if camera is None or (hasattr(camera, 'isOpened') and not camera.isOpened()):
+            print("Trying method 5: Checking for CSI camera tools...")
+            # Check both PATH and common Raspberry Pi locations
+            camera_tools = [
+                ('libcamera-still', 'libcamera', None),
+                ('rpicam-still', 'rpicam', None),
+                ('raspistill', 'raspistill', None),
+                ('raspistill', 'raspistill', '/opt/vc/bin/raspistill'),  # Common RPi location
+                ('raspistill', 'raspistill', '/usr/bin/raspistill'),
+            ]
+            
+            for tool_name, tool_type, tool_path in camera_tools:
+                try:
+                    # Check specific path first, then which
+                    if tool_path and os.path.exists(tool_path) and os.access(tool_path, os.X_OK):
+                        print(f"  {tool_name} found at {tool_path} - will use for CSI camera capture")
+                        global USE_LIBCAMERA, camera_tool_path
+                        USE_LIBCAMERA = tool_type
+                        camera = tool_type  # Mark as using this tool
+                        camera_tool_path = tool_path  # Store full path for later use
+                        print(f"✓ Will use {tool_path} for camera capture")
+                        break
+                    elif tool_path is None:
+                        # Check PATH
+                        result = subprocess.run(['which', tool_name], 
+                                              capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0:
+                            tool_full_path = result.stdout.strip()
+                            print(f"  {tool_name} found at {tool_full_path} - will use for CSI camera capture")
+                            global USE_LIBCAMERA, camera_tool_path
+                            USE_LIBCAMERA = tool_type
+                            camera = tool_type
+                            camera_tool_path = tool_full_path  # Store full path for later use
+                            print(f"✓ Will use {tool_full_path} for camera capture")
+                            break
+                except Exception as e:
+                    print(f"  Exception checking for {tool_name}: {e}")
+            
+            if camera is None or (camera != "libcamera" and camera != "rpicam" and camera != "raspistill"):
+                print("  No CSI camera tools found (libcamera-still, rpicam-still, or raspistill)")
+                print("  Note: raspberrypi-userland is installed, but raspistill may not be in PATH")
+                print("  Try: find /usr /opt -name raspistill 2>/dev/null")
+        
+        if camera is None or (camera not in ["libcamera", "rpicam", "raspistill"] and hasattr(camera, 'isOpened') and not camera.isOpened()):
+            print(f"ERROR: Failed to open camera device {CAMERA_DEVICE} with any method")
             print("Possible causes:")
             print("  - Device is in use by another process")
             print("  - Permission denied (user not in 'video' group)")
             print("  - Camera driver not loaded or incompatible")
             print("  - OpenCV not compiled with V4L2 support")
+            print("  - CSI camera may need libcamera (install: dnf install libcamera-apps on AlmaLinux/RHEL)")
             print("\nTroubleshooting:")
             print("  1. Check permissions: ls -l /dev/video*")
             print("  2. Check if user is in video group: groups")
             print("  3. Try: sudo usermod -a -G video $USER")
             print("  4. Check if camera is in use: lsof /dev/video0")
+            print("  5. For CSI cameras: install libcamera-apps")
             camera = None
+            return
+        
+        # Skip OpenCV setup if using external camera tool
+        if camera in ["libcamera", "rpicam", "raspistill"]:
+            tool_names = {
+                "libcamera": "libcamera-still",
+                "rpicam": "rpicam-still",
+                "raspistill": "raspistill"
+            }
+            print(f"✓ Camera initialized using {tool_names.get(camera, 'external tool')}")
             return
         
         # Set camera resolution
@@ -498,12 +667,93 @@ def camera2():
 
 @app.route('/camera', methods=['GET'])
 def camera_endpoint():
-    """Captures an image from the camera using OpenCV VideoCapture and returns it as Base64 encoded."""
-    global camera
-    if camera is None or not camera.isOpened():
+    """Captures an image from the camera and returns it as Base64 encoded."""
+    global camera, USE_LIBCAMERA
+    
+    if camera is None:
         return jsonify({"error": "Camera not started or failed to initialize."}), 500
 
     try:
+        # Use external camera tools for CSI cameras on AlmaLinux/RHEL 9
+        if USE_LIBCAMERA or camera in ["libcamera", "rpicam", "raspistill"]:
+            # Determine which tool to use and get its path
+            tool_cmd = None
+            tool_type = camera if camera in ["libcamera", "rpicam", "raspistill"] else USE_LIBCAMERA
+            
+            # Use stored path if available, otherwise use command name
+            global camera_tool_path
+            if camera_tool_path:
+                tool_cmd = camera_tool_path
+            else:
+                # Fallback to just the command name
+                if tool_type == "libcamera":
+                    tool_cmd = "libcamera-still"
+                elif tool_type == "rpicam":
+                    tool_cmd = "rpicam-still"
+                elif tool_type == "raspistill":
+                    tool_cmd = "raspistill"
+            
+            if not tool_cmd:
+                return jsonify({"error": "Camera tool not specified"}), 500
+            
+            # Capture image using the appropriate tool
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            
+            try:
+                # Build command based on tool
+                if tool_cmd in ["libcamera-still", "rpicam-still"]:
+                    # Modern libcamera/rpicam tools
+                    cmd = [
+                        tool_cmd,
+                        '--width', str(CAMERA_WIDTH),
+                        '--height', str(CAMERA_HEIGHT),
+                        '--output', tmp_path,
+                        '--timeout', '1000',  # 1 second timeout
+                        '--nopreview',
+                        '--immediate'  # Capture immediately
+                    ]
+                else:
+                    # Legacy raspistill
+                    cmd = [
+                        tool_cmd,
+                        '-w', str(CAMERA_WIDTH),
+                        '-h', str(CAMERA_HEIGHT),
+                        '-o', tmp_path,
+                        '-t', '1000',  # 1 second timeout
+                        '-n'  # No preview
+                    ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                
+                if result.returncode != 0:
+                    return jsonify({"error": f"{tool_cmd} failed: {result.stderr}"}), 500
+                
+                # Read the captured image
+                with open(tmp_path, 'rb') as img_file:
+                    image_data = img_file.read()
+                
+                # Encode to Base64
+                base64_encoded_image = base64.b64encode(image_data).decode('utf-8')
+                
+                # Clean up temp file
+                os.unlink(tmp_path)
+                
+                return base64_encoded_image
+                
+            except subprocess.TimeoutExpired:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                return jsonify({"error": "Camera capture timeout"}), 500
+            except Exception as e:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+        
+        # Use OpenCV for USB cameras or V4L2-compatible cameras
+        if not camera.isOpened():
+            return jsonify({"error": "Camera not opened."}), 500
+        
         # Read frame from camera (OpenCV returns BGR format)
         ret, frame = camera.read()
         
@@ -526,6 +776,8 @@ def camera_endpoint():
 
     except Exception as e:
         print(f"Error during image capture or encoding: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"An error occurred: {e}"}), 500
 
 # --- Main execution block ---

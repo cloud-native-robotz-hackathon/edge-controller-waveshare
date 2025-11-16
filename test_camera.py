@@ -21,13 +21,32 @@ for video_dev in video_devices:
         cap = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
         if cap.isOpened():
             print(f"  ✓ Opened successfully")
-            # Try to read a frame
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                print(f"  ✓ Can read frames! Shape: {frame.shape}")
-                working_cameras.append((dev_path, frame.shape))
+            
+            # Set some properties that might help with timeout
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to avoid stale frames
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            
+            # Check if it's a capture device by checking capabilities
+            try:
+                backend = cap.getBackendName()
+                print(f"    Backend: {backend}")
+            except:
+                pass
+            
+            # Try to read a frame with shorter timeout
+            # Set timeout by using grab() + retrieve() instead of read()
+            print(f"    Attempting to grab frame...")
+            grabbed = cap.grab()
+            if grabbed:
+                ret, frame = cap.retrieve()
+                if ret and frame is not None and frame.size > 0:
+                    print(f"  ✓✓✓ Can read frames! Shape: {frame.shape}")
+                    working_cameras.append((dev_path, frame.shape))
+                else:
+                    print(f"  ✗ Grabbed but retrieve failed or empty frame")
             else:
-                print(f"  ✗ Opened but cannot read frames")
+                print(f"  ✗ Cannot grab frame (likely not a capture device)")
+            
             cap.release()
         else:
             print(f"  ✗ Failed to open")
