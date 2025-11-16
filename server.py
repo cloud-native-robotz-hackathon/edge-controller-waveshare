@@ -222,27 +222,25 @@ def left(degree):
     # For short turns, overhead and wheel slip dominate - but higher speed (0.4) reduces slip
     # 4-wheel robot: wheel slip during in-place turns, but higher speed helps significantly
     # Current observations with 0.4 speed:
-    #   - 90° turns ~160° (1.78× too much) - need to reduce scaling
-    #   - 45° turns ~110-120° (2.4-2.67× too much) - need to reduce scaling significantly
-    # Higher speed reduces slip, so we need less compensation than before
+    #   - 45° turns 90° (2× too much) - need to reduce by half
+    #   - 90° turns 110-120° (1.2-1.3× too much) - need to reduce by ~25%
+    # Higher speed reduces slip, so we need much less compensation
     if degree <= 30:
-        # Very short turns: still some slip, but less with higher speed
-        scale_factor = 1.3
-        duration = base_duration * scale_factor + overhead
+        # Very short turns: reduce significantly
+        scale_factor = 0.5
+        duration = base_duration * scale_factor + overhead * 0.3
     elif degree <= 45:
-        # 45°: higher speed helps, but still needs some compensation
-        # Was turning 110-120° with 2.5×, so try 1.2×
-        scale_factor = 1.2
-        duration = base_duration * scale_factor + overhead
+        # 45°: turning 90° (2× too much), so reduce by half
+        scale_factor = 0.5
+        duration = base_duration * scale_factor + overhead * 0.4
     elif degree < 90:
-        # Medium turns: minimal scaling needed with higher speed
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.15
-        duration = base_duration * scale_factor + overhead
+        # Medium turns: reduce proportionally
+        scale_factor = 0.5 + (degree - 45) / 45.0 * 0.3  # 0.5 at 45°, 0.8 at 90°
+        duration = base_duration * scale_factor + overhead * 0.5
     else:
-        # 90° was turning 160° (1.78×), so we need to reduce base duration
-        # Actually, maybe the base rate is wrong, or we need less overhead
-        # Try reducing overhead impact for longer turns
-        duration = base_duration * 0.9 + overhead * 0.5
+        # 90°: turning 110-120° (1.2-1.3× too much), so reduce by ~25%
+        # Use 0.75-0.8× base duration
+        duration = base_duration * 0.75 + overhead * 0.4
     
     print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
@@ -284,27 +282,25 @@ def right(degree):
     # For short turns, overhead and wheel slip dominate - but higher speed (0.4) reduces slip
     # 4-wheel robot: wheel slip during in-place turns, but higher speed helps significantly
     # Current observations with 0.4 speed:
-    #   - 90° turns ~160° (1.78× too much) - need to reduce scaling
-    #   - 45° turns ~110-120° (2.4-2.67× too much) - need to reduce scaling significantly
-    # Higher speed reduces slip, so we need less compensation than before
+    #   - 45° turns 90° (2× too much) - need to reduce by half
+    #   - 90° turns 110-120° (1.2-1.3× too much) - need to reduce by ~25%
+    # Higher speed reduces slip, so we need much less compensation
     if degree <= 30:
-        # Very short turns: still some slip, but less with higher speed
-        scale_factor = 1.3
-        duration = base_duration * scale_factor + overhead
+        # Very short turns: reduce significantly
+        scale_factor = 0.5
+        duration = base_duration * scale_factor + overhead * 0.3
     elif degree <= 45:
-        # 45°: higher speed helps, but still needs some compensation
-        # Was turning 110-120° with 2.5×, so try 1.2×
-        scale_factor = 1.2
-        duration = base_duration * scale_factor + overhead
+        # 45°: turning 90° (2× too much), so reduce by half
+        scale_factor = 0.5
+        duration = base_duration * scale_factor + overhead * 0.4
     elif degree < 90:
-        # Medium turns: minimal scaling needed with higher speed
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.15
-        duration = base_duration * scale_factor + overhead
+        # Medium turns: reduce proportionally
+        scale_factor = 0.5 + (degree - 45) / 45.0 * 0.3  # 0.5 at 45°, 0.8 at 90°
+        duration = base_duration * scale_factor + overhead * 0.5
     else:
-        # 90° was turning 160° (1.78×), so we need to reduce base duration
-        # Actually, maybe the base rate is wrong, or we need less overhead
-        # Try reducing overhead impact for longer turns
-        duration = base_duration * 0.9 + overhead * 0.5
+        # 90°: turning 110-120° (1.2-1.3× too much), so reduce by ~25%
+        # Use 0.75-0.8× base duration
+        duration = base_duration * 0.75 + overhead * 0.4
     
     print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
