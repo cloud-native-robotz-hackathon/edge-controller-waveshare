@@ -213,23 +213,24 @@ def left(degree):
     
     # Left turn in place: left wheel backward, right wheel forward
     # Duration calculation accounts for acceleration/deceleration and HTTP latency
-    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 1.5× time)
+    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 2.0× time)
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
     # For short turns, overhead dominates - need much more aggressive scaling
-    # If 45° only turns 30°, we need 45/30 = 1.5× the time
+    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs 2.0× time minimum)
+    # Since 1.5× wasn't enough, trying 2.0× for 45°
     if degree <= 30:
-        # Very short turns: need 2× time
-        scale_factor = 2.0
+        # Very short turns: need 2.5× time
+        scale_factor = 2.5
         duration = base_duration * scale_factor + overhead
     elif degree <= 45:
-        # 45° needs 1.5× time to actually turn 45°
-        scale_factor = 1.5
+        # 45° needs 2.0× time to actually turn 45° (was 1.5×, still only turning 30°)
+        scale_factor = 2.0
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
         # Medium turns: moderate scaling
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.3
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.4
         duration = base_duration * scale_factor + overhead
     else:
         # Longer turns: fixed overhead
@@ -267,23 +268,24 @@ def right(degree):
     
     # Right turn in place: left wheel forward, right wheel backward
     # Duration calculation accounts for acceleration/deceleration and HTTP latency
-    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 1.5× time)
+    # Observations: 3×45° ≈ 90°, so 45° is only turning ~30° (needs 2.0× time)
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
     # For short turns, overhead dominates - need much more aggressive scaling
-    # If 45° only turns 30°, we need 45/30 = 1.5× the time
+    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs 2.0× time minimum)
+    # Since 1.5× wasn't enough, trying 2.0× for 45°
     if degree <= 30:
-        # Very short turns: need 2× time
-        scale_factor = 2.0
+        # Very short turns: need 2.5× time
+        scale_factor = 2.5
         duration = base_duration * scale_factor + overhead
     elif degree <= 45:
-        # 45° needs 1.5× time to actually turn 45°
-        scale_factor = 1.5
+        # 45° needs 2.0× time to actually turn 45° (was 1.5×, still only turning 30°)
+        scale_factor = 2.0
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
         # Medium turns: moderate scaling
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.3
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.4
         duration = base_duration * scale_factor + overhead
     else:
         # Longer turns: fixed overhead
