@@ -206,10 +206,20 @@ def init_camera():
                 print("  No obvious capture devices found, will test all devices...")
             for video_dev in video_devices:
                 dev_path = f'/dev/{video_dev}'
+                dev_num = video_dev.replace('video', '')
                 print(f"  Trying {dev_path}...", end=' ', flush=True)
                 test_cam = None
                 try:
+                    # Try opening by path first
                     test_cam = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
+                    if not test_cam.isOpened():
+                        # If path fails, try device index
+                        try:
+                            dev_index = int(dev_num)
+                            test_cam = cv2.VideoCapture(dev_index, cv2.CAP_V4L2)
+                        except (ValueError, Exception):
+                            pass
+                    
                     if test_cam.isOpened():
                         # Set buffer size to 1 to avoid stale frames
                         test_cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -299,10 +309,19 @@ def init_camera():
         if camera is None or (hasattr(camera, 'isOpened') and not camera.isOpened()):
             print("Trying method 6: Checking for CSI camera tools...")
             # Check both PATH and common Raspberry Pi locations
-            # Note: libcamera-still is not available in AlmaLinux repos
+            # Note: libcamera-still is not available in AlmaLinux repos, but libcamera-tools might have alternatives
             camera_tools = [
+                # libcamera-tools package (installed on system)
+                ('cam', 'cam', '/usr/bin/cam'),  # General camera tool from libcamera-tools
+                ('cam', 'cam', None),  # Check PATH as well
+                # Standard libcamera tools (may not be available on AlmaLinux 9)
                 ('libcamera-still', 'libcamera', None),
                 ('libcamera-still', 'libcamera', '/usr/bin/libcamera-still'),
+                # Check libcamera-tools package (installed on system)
+                ('libcamera-hello', 'libcamera_hello', None),  # Test tool, might work for capture
+                ('libcamera-vid', 'libcamera_vid', None),  # Video tool, might work for single frame
+                ('libcamera-raw', 'libcamera_raw', None),  # Raw capture tool
+                # Alternative tools
                 ('rpicam-still', 'rpicam', None),
                 ('rpicam-still', 'rpicam', '/usr/bin/rpicam-still'),
                 ('raspistill', 'raspistill', None),
@@ -335,41 +354,58 @@ def init_camera():
                 except Exception as e:
                     print(f"  Exception checking for {tool_name}: {e}")
             
-            if camera is None or (camera != "libcamera" and camera != "rpicam" and camera != "raspistill" and camera != "python_libcamera"):
+            if camera is None or (camera not in ["libcamera", "rpicam", "raspistill", "python_libcamera", "libcamera_hello", "libcamera_vid", "libcamera_raw", "cam"]):
                 print("  No CSI camera tools found")
-                print("  Note: libcamera-still is not available in AlmaLinux repos")
+                print("  Note: libcamera-still is not available in AlmaLinux 9 repos")
+                print("  Check what tools are in libcamera-tools package:")
+                print("    rpm -ql libcamera-tools | grep bin")
                 print("  Options:")
-                print("    1. Install libcamera-v4l2: dnf install libcamera-v4l2 (provides V4L2 compatibility)")
-                print("    2. Try building libcamera-apps from source")
-                print("    3. Use Python libcamera bindings if available")
+                print("    1. Check if libcamera-tools has capture tools: rpm -ql libcamera-tools")
+                print("    2. Try using GStreamer with libcamera-gstreamer (if installed)")
+                print("    3. Try building libcamera-apps from source")
+                print("    4. Use Python libcamera bindings if available")
         
-        if camera is None or (camera not in ["libcamera", "rpicam", "raspistill", "python_libcamera"] and hasattr(camera, 'isOpened') and not camera.isOpened()):
+        if camera is None or (camera not in ["libcamera", "rpicam", "raspistill", "python_libcamera", "libcamera_hello", "libcamera_vid", "libcamera_raw", "cam"] and hasattr(camera, 'isOpened') and not camera.isOpened()):
             print(f"ERROR: Failed to open camera device {CAMERA_DEVICE} with any method")
-            print("Possible causes:")
-            print("  - Device is in use by another process")
-            print("  - Permission denied (user not in 'video' group)")
-            print("  - Camera driver not loaded or incompatible")
-            print("  - OpenCV not compiled with V4L2 support")
-            print("  - PiSP cameras may not be accessible via standard V4L2 interface")
-            print("  - CSI camera may need libcamera (install: dnf install libcamera-apps on AlmaLinux/RHEL)")
-            print("\nTroubleshooting:")
+            print("\n" + "="*70)
+            print("PiSP Camera Access Issue on AlmaLinux 9")
+            print("="*70)
+            print("OpenCV cannot directly access PiSP (pispbe-input) devices.")
+            print("The error 'can't be used to capture by name' indicates these")
+            print("are not standard V4L2 capture devices.")
+            print("\nNOTE: libcamera-v4l2 is not available for AlmaLinux 9")
+            print("(it's only available in AlmaLinux 10).")
+            print("\nPOSSIBLE SOLUTIONS:")
+            print("  1. Check available libcamera packages:")
+            print("     dnf search libcamera")
+            print("     dnf list available | grep libcamera")
+            print("\n  2. Check if Python libcamera bindings are available:")
+            print("     python3 -c 'import libcamera'")
+            print("     dnf search python3-libcamera")
+            print("\n  3. Build libcamera from source (complex):")
+            print("     See: https://libcamera.org/getting-started.html")
+            print("\n  4. Consider upgrading to AlmaLinux 10 (if possible)")
+            print("="*70)
+            print("\nAlternative troubleshooting:")
             print("  1. Check permissions: ls -l /dev/video*")
             print("  2. Check if user is in video group: groups")
             print("  3. Try: sudo usermod -a -G video $USER")
-            print("  4. Check if camera is in use: lsof /dev/video0")
-            print("  5. For CSI cameras: install libcamera-apps")
-            print("  6. For PiSP cameras: may need libcamera or rpicam tools")
+            print("  4. Check if camera is in use: lsof /dev/video*")
             print("\nNote: Camera will not be available until initialization succeeds.")
             camera = None
             return
         
         # Skip OpenCV setup if using external camera tool or Python libcamera
-        if camera in ["libcamera", "rpicam", "raspistill", "python_libcamera"]:
+        if camera in ["libcamera", "rpicam", "raspistill", "python_libcamera", "libcamera_hello", "libcamera_vid", "libcamera_raw", "cam"]:
             tool_names = {
                 "libcamera": "libcamera-still",
                 "rpicam": "rpicam-still",
                 "raspistill": "raspistill",
-                "python_libcamera": "Python libcamera bindings"
+                "python_libcamera": "Python libcamera bindings",
+                "libcamera_hello": "libcamera-hello",
+                "libcamera_vid": "libcamera-vid",
+                "libcamera_raw": "libcamera-raw",
+                "cam": "cam (libcamera-tools)"
             }
             print(f"✓ Camera initialized using {tool_names.get(camera, 'external tool')}")
             return
@@ -722,7 +758,7 @@ def camera_endpoint():
 
     try:
         # Use external camera tools or Python libcamera for CSI cameras on AlmaLinux/RHEL 9
-        if USE_LIBCAMERA or camera in ["libcamera", "rpicam", "raspistill", "python_libcamera"]:
+        if USE_LIBCAMERA or camera in ["libcamera", "rpicam", "raspistill", "python_libcamera", "libcamera_hello", "libcamera_vid", "libcamera_raw", "cam"]:
             # Handle Python libcamera bindings
             if camera == "python_libcamera" or USE_LIBCAMERA == "python_libcamera":
                 try:
@@ -753,7 +789,7 @@ def camera_endpoint():
             
             # Determine which tool to use and get its path
             tool_cmd = None
-            tool_type = camera if camera in ["libcamera", "rpicam", "raspistill"] else USE_LIBCAMERA
+            tool_type = camera if camera in ["libcamera", "rpicam", "raspistill", "libcamera_hello", "libcamera_vid", "libcamera_raw", "cam"] else USE_LIBCAMERA
             
             # Use stored path if available, otherwise use command name
             global camera_tool_path
@@ -767,6 +803,14 @@ def camera_endpoint():
                     tool_cmd = "rpicam-still"
                 elif tool_type == "raspistill":
                     tool_cmd = "raspistill"
+                elif tool_type == "libcamera_hello":
+                    tool_cmd = "libcamera-hello"
+                elif tool_type == "libcamera_vid":
+                    tool_cmd = "libcamera-vid"
+                elif tool_type == "libcamera_raw":
+                    tool_cmd = "libcamera-raw"
+                elif tool_type == "cam":
+                    tool_cmd = "cam"
             
             if not tool_cmd:
                 return jsonify({"error": "Camera tool not specified"}), 500
@@ -777,7 +821,18 @@ def camera_endpoint():
             
             try:
                 # Build command based on tool
-                if tool_cmd in ["libcamera-still", "rpicam-still"]:
+                if tool_cmd == "cam":
+                    # cam tool from libcamera-tools
+                    # Syntax: cam -c <camera> -C <count> -F <file> -s role=still,width=W,height=H
+                    # Use camera index 0 (first camera) or we could list cameras first
+                    cmd = [
+                        tool_cmd,
+                        '-c', '0',  # Camera index 0 (first camera)
+                        '-C', '1',  # Capture 1 frame
+                        '-F', tmp_path,  # Output file
+                        '-s', f'role=still,width={CAMERA_WIDTH},height={CAMERA_HEIGHT}'  # Stream configuration
+                    ]
+                elif tool_cmd in ["libcamera-still", "rpicam-still"]:
                     # Modern libcamera/rpicam tools
                     cmd = [
                         tool_cmd,
