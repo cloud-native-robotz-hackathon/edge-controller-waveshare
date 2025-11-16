@@ -54,19 +54,129 @@ def init_camera():
         # Check if device exists
         if not os.path.exists(CAMERA_DEVICE):
             print(f"ERROR: Camera device {CAMERA_DEVICE} does not exist!")
-            print(f"Available video devices: {[f for f in os.listdir('/dev') if f.startswith('video')]}")
+            video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
+            print(f"Available video devices: {video_devices}")
             camera = None
             return
         
-        # Try to open camera device
-        camera = cv2.VideoCapture(CAMERA_DEVICE)
+        # Check permissions
+        import stat
+        device_stat = os.stat(CAMERA_DEVICE)
+        device_mode = stat.filemode(device_stat.st_mode)
+        print(f"Camera device permissions: {device_mode}")
         
-        if not camera.isOpened():
-            print(f"ERROR: Failed to open camera device {CAMERA_DEVICE}")
+        # Try different methods to open camera
+        # On RHEL 9, sometimes need to use device index or different backends
+        camera = None
+        
+        # Method 1: Try with device path and V4L2 backend
+        print("Trying method 1: Device path with V4L2 backend...")
+        try:
+            camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
+            if camera.isOpened():
+                print("✓ Successfully opened with V4L2 backend")
+            else:
+                print("  Failed with V4L2 backend")
+                if camera:
+                    camera.release()
+                camera = None
+        except Exception as e:
+            print(f"  Exception: {e}")
+            if camera:
+                try:
+                    camera.release()
+                except:
+                    pass
+            camera = None
+        
+        # Method 2: Try with device index (extract number from /dev/video0 -> 0)
+        if camera is None or not camera.isOpened():
+            print("Trying method 2: Device index...")
+            try:
+                device_index = int(CAMERA_DEVICE.replace('/dev/video', ''))
+                print(f"  Using device index: {device_index}")
+                camera = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
+                if camera.isOpened():
+                    print("✓ Successfully opened with device index")
+                else:
+                    print("  Failed with device index")
+                    if camera:
+                        camera.release()
+                    camera = None
+            except (ValueError, Exception) as e:
+                print(f"  Exception: {e}")
+                if camera:
+                    try:
+                        camera.release()
+                    except:
+                        pass
+                camera = None
+        
+        # Method 3: Try with ANY backend
+        if camera is None or not camera.isOpened():
+            print("Trying method 3: ANY backend...")
+            try:
+                camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_ANY)
+                if camera.isOpened():
+                    print("✓ Successfully opened with ANY backend")
+                else:
+                    print("  Failed with ANY backend")
+                    if camera:
+                        camera.release()
+                    camera = None
+            except Exception as e:
+                print(f"  Exception: {e}")
+                if camera:
+                    try:
+                        camera.release()
+                    except:
+                        pass
+                camera = None
+        
+        # Method 4: Try opening all video devices to find working one
+        if camera is None or not camera.isOpened():
+            print("Trying method 4: Scanning all video devices...")
+            video_devices = sorted([f for f in os.listdir('/dev') if f.startswith('video')])
+            for video_dev in video_devices:
+                dev_path = f'/dev/{video_dev}'
+                print(f"  Trying {dev_path}...")
+                try:
+                    test_cam = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
+                    if test_cam.isOpened():
+                        # Try to read a frame to verify it's actually a camera
+                        ret, test_frame = test_cam.read()
+                        if ret and test_frame is not None:
+                            print(f"✓ Found working camera at {dev_path}")
+                            camera = test_cam
+                            # Update CAMERA_DEVICE to the working one
+                            global CAMERA_DEVICE
+                            CAMERA_DEVICE = dev_path
+                            break
+                        else:
+                            test_cam.release()
+                    else:
+                        if test_cam:
+                            test_cam.release()
+                except Exception as e:
+                    print(f"    Exception with {dev_path}: {e}")
+                    if 'test_cam' in locals():
+                        try:
+                            test_cam.release()
+                        except:
+                            pass
+        
+        if camera is None or not camera.isOpened():
+            print(f"ERROR: Failed to open camera device {CAMERA_DEVICE} with any backend")
             print("Possible causes:")
             print("  - Device is in use by another process")
             print("  - Permission denied (user not in 'video' group)")
-            print("  - Device not accessible")
+            print("  - Camera driver not loaded or incompatible")
+            print("  - OpenCV not compiled with V4L2 support")
+            print("\nTroubleshooting:")
+            print("  1. Check permissions: ls -l /dev/video*")
+            print("  2. Check if user is in video group: groups")
+            print("  3. Try: sudo usermod -a -G video $USER")
+            print("  4. Check if camera is in use: lsof /dev/video0")
             camera = None
             return
         
