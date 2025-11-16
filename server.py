@@ -283,7 +283,9 @@ def init_camera():
             # Check both PATH and common Raspberry Pi locations
             camera_tools = [
                 ('libcamera-still', 'libcamera', None),
+                ('libcamera-still', 'libcamera', '/usr/bin/libcamera-still'),  # Common location
                 ('rpicam-still', 'rpicam', None),
+                ('rpicam-still', 'rpicam', '/usr/bin/rpicam-still'),
                 ('raspistill', 'raspistill', None),
                 ('raspistill', 'raspistill', '/opt/vc/bin/raspistill'),  # Common RPi location
                 ('raspistill', 'raspistill', '/usr/bin/raspistill'),
@@ -326,6 +328,7 @@ def init_camera():
             print("  - Permission denied (user not in 'video' group)")
             print("  - Camera driver not loaded or incompatible")
             print("  - OpenCV not compiled with V4L2 support")
+            print("  - PiSP cameras may not be accessible via standard V4L2 interface")
             print("  - CSI camera may need libcamera (install: dnf install libcamera-apps on AlmaLinux/RHEL)")
             print("\nTroubleshooting:")
             print("  1. Check permissions: ls -l /dev/video*")
@@ -333,6 +336,8 @@ def init_camera():
             print("  3. Try: sudo usermod -a -G video $USER")
             print("  4. Check if camera is in use: lsof /dev/video0")
             print("  5. For CSI cameras: install libcamera-apps")
+            print("  6. For PiSP cameras: may need libcamera or rpicam tools")
+            print("\nNote: Camera will not be available until initialization succeeds.")
             camera = None
             return
         
@@ -667,8 +672,15 @@ def camera_endpoint():
     """Captures an image from the camera and returns it as Base64 encoded."""
     global camera, USE_LIBCAMERA
     
+    # If camera is None, try to reinitialize it (in case it failed at startup)
     if camera is None:
-        return jsonify({"error": "Camera not started or failed to initialize."}), 500
+        print("Camera is None, attempting to reinitialize...")
+        init_camera()
+        if camera is None:
+            return jsonify({
+                "error": "Camera not started or failed to initialize.",
+                "details": "Check server logs for initialization errors. PiSP cameras may require libcamera tools."
+            }), 500
 
     try:
         # Use external camera tools for CSI cameras on AlmaLinux/RHEL 9
@@ -707,8 +719,7 @@ def camera_endpoint():
                         '--height', str(CAMERA_HEIGHT),
                         '--output', tmp_path,
                         '--timeout', '1000',  # 1 second timeout
-                        '--nopreview',
-                        '--immediate'  # Capture immediately
+                        '--nopreview'
                     ]
                 else:
                     # Legacy raspistill
