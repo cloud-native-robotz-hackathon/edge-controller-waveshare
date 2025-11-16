@@ -26,12 +26,14 @@ DEFAULT_DRIVE_SPEED = 0.3
 
 # --- Turn Configuration ---
 # Base turn rate: seconds per degree (calibrated for this robot)
-# Account for acceleration/deceleration time and HTTP latency
-# Observations: 3×45° ≈ 90°, so short turns need more time
+# Account for acceleration/deceleration time, HTTP latency, and wheel slip
+# Robot has 4 wheels (2 per side) - wheel slip during in-place turns causes inconsistency
+# Observations: 3×45° ≈ 90°, so short turns need more time due to slip
 TURN_RATE_SECONDS_PER_DEGREE = 0.0072  # ~0.65 seconds per 90 degrees
 TURN_ACCELERATION_TIME = 0.08  # Time to reach full speed (seconds)
 TURN_DECELERATION_TIME = 0.08  # Time to stop (seconds)
 TURN_HTTP_LATENCY = 0.05  # Approximate HTTP request latency (seconds)
+TURN_SPEED = 0.4  # Turn speed (increased from 0.3 to reduce slip - higher speed = less slip)
 
 # --- Camera Configuration ---
 # Camera device path (default /dev/video0 for first USB camera or CSI camera via v4l2)
@@ -217,30 +219,32 @@ def left(degree):
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
-    # For short turns, overhead dominates - need much more aggressive scaling
-    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs 2.0× time minimum)
-    # Since 1.5× wasn't enough, trying 2.0× for 45°
+    # For short turns, overhead and wheel slip dominate - need much more aggressive scaling
+    # 4-wheel robot: wheel slip during in-place turns makes short turns very inconsistent
+    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs significant compensation)
+    # Higher turn speed helps reduce slip, but short turns still need extra time
     if degree <= 30:
-        # Very short turns: need 2.5× time
-        scale_factor = 2.5
+        # Very short turns: significant slip, need 3.0× time
+        scale_factor = 3.0
         duration = base_duration * scale_factor + overhead
     elif degree <= 45:
-        # 45° needs 2.0× time to actually turn 45° (was 1.5×, still only turning 30°)
-        scale_factor = 2.0
+        # 45° needs 2.5× time to account for wheel slip (was 2.0×, still not enough)
+        scale_factor = 2.5
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
-        # Medium turns: moderate scaling
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.4
+        # Medium turns: moderate scaling for slip
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.5
         duration = base_duration * scale_factor + overhead
     else:
-        # Longer turns: fixed overhead
+        # Longer turns: less slip impact, fixed overhead
         duration = base_duration + overhead
     
     print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
     # Start turning
+    # Use higher speed to reduce wheel slip (4-wheel robot slips more at lower speeds)
     start_time = time.time()
-    success, message = send_motor_command_http(-0.3, 0.3)
+    success, message = send_motor_command_http(-TURN_SPEED, TURN_SPEED)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
     
@@ -272,30 +276,32 @@ def right(degree):
     base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
     overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
     
-    # For short turns, overhead dominates - need much more aggressive scaling
-    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs 2.0× time minimum)
-    # Since 1.5× wasn't enough, trying 2.0× for 45°
+    # For short turns, overhead and wheel slip dominate - need much more aggressive scaling
+    # 4-wheel robot: wheel slip during in-place turns makes short turns very inconsistent
+    # Observation: 3×45° ≈ 90°, so 45° only turns ~30° (needs significant compensation)
+    # Higher turn speed helps reduce slip, but short turns still need extra time
     if degree <= 30:
-        # Very short turns: need 2.5× time
-        scale_factor = 2.5
+        # Very short turns: significant slip, need 3.0× time
+        scale_factor = 3.0
         duration = base_duration * scale_factor + overhead
     elif degree <= 45:
-        # 45° needs 2.0× time to actually turn 45° (was 1.5×, still only turning 30°)
-        scale_factor = 2.0
+        # 45° needs 2.5× time to account for wheel slip (was 2.0×, still not enough)
+        scale_factor = 2.5
         duration = base_duration * scale_factor + overhead
     elif degree < 90:
-        # Medium turns: moderate scaling
-        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.4
+        # Medium turns: moderate scaling for slip
+        scale_factor = 1.0 + (90.0 - degree) / 90.0 * 0.5
         duration = base_duration * scale_factor + overhead
     else:
-        # Longer turns: fixed overhead
+        # Longer turns: less slip impact, fixed overhead
         duration = base_duration + overhead
     
     print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
     # Start turning
+    # Use higher speed to reduce wheel slip (4-wheel robot slips more at lower speeds)
     start_time = time.time()
-    success, message = send_motor_command_http(0.3, -0.3)
+    success, message = send_motor_command_http(TURN_SPEED, -TURN_SPEED)
     if not success:
         return jsonify({"status": "Error", "message": f"Failed to start: {message}"}), 500
     
