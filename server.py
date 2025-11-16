@@ -52,7 +52,7 @@ camera_tool_path = None  # Store full path to camera tool if using external tool
 
 def init_camera():
     """Initializes the camera using OpenCV VideoCapture (v4l2 compatible for AlmaLinux/RHEL 9)."""
-    global camera
+    global camera, CAMERA_DEVICE, USE_LIBCAMERA, camera_tool_path
     try:
         print(f"Attempting to initialize camera at {CAMERA_DEVICE}...")
         
@@ -257,7 +257,6 @@ def init_camera():
                                 print(f"✓ WORKING CAMERA!")
                                 camera = test_cam
                                 # Update CAMERA_DEVICE to the working one
-                                global CAMERA_DEVICE
                                 CAMERA_DEVICE = dev_path
                                 break
                             else:
@@ -295,7 +294,6 @@ def init_camera():
                     # Check specific path first, then which
                     if tool_path and os.path.exists(tool_path) and os.access(tool_path, os.X_OK):
                         print(f"  {tool_name} found at {tool_path} - will use for CSI camera capture")
-                        global USE_LIBCAMERA, camera_tool_path
                         USE_LIBCAMERA = tool_type
                         camera = tool_type  # Mark as using this tool
                         camera_tool_path = tool_path  # Store full path for later use
@@ -308,7 +306,6 @@ def init_camera():
                         if result.returncode == 0:
                             tool_full_path = result.stdout.strip()
                             print(f"  {tool_name} found at {tool_full_path} - will use for CSI camera capture")
-                            global USE_LIBCAMERA, camera_tool_path
                             USE_LIBCAMERA = tool_type
                             camera = tool_type
                             camera_tool_path = tool_full_path  # Store full path for later use
