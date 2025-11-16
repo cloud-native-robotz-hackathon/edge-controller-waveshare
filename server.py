@@ -15,8 +15,9 @@ print("Waveshare Rover Flask Edge Controller has started.")
 # WAVE ROVER ESP32 creates a WiFi hotspot on startup
 # Default IP is 192.168.4.1 when in hotspot mode
 # Can be configured via environment variable ROBOT_IP
+# The robot expects HTTP GET requests to /js endpoint with JSON as query parameter
 ROBOT_IP = os.environ.get('ROBOT_IP', '192.168.4.1')
-ROBOT_HTTP_ENDPOINT = f'http://{ROBOT_IP}'
+ROBOT_HTTP_ENDPOINT = f'http://{ROBOT_IP}/js'
 HTTP_TIMEOUT = 2.0  # Timeout in seconds for HTTP requests
 
 # --- Robot Movement Configuration ---
@@ -69,22 +70,30 @@ def test_robot_connection():
     """Tests the connection to the WAVE ROVER via WiFi."""
     try:
         # Try to send a stop command to test connectivity
-        response = requests.post(ROBOT_HTTP_ENDPOINT, 
-                                json={"T": 1, "L": 0.0, "R": 0.0},
-                                timeout=HTTP_TIMEOUT)
+        # WAVE ROVER expects GET request to /js?json=<command>
+        command_json = json.dumps({"T": 1, "L": 0.0, "R": 0.0})
+        url = f"{ROBOT_HTTP_ENDPOINT}?json={command_json}"
+        print(f"Testing connection to {url}...")
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        print(f"Connection test response: status={response.status_code}, body={response.text[:200]}")
         if response.status_code == 200:
-            print(f"Successfully connected to WAVE ROVER at {ROBOT_HTTP_ENDPOINT}")
+            print(f"Successfully connected to WAVE ROVER at {ROBOT_IP}")
             return True
         else:
             print(f"WAVE ROVER responded with status code {response.status_code}")
+            print(f"Response body: {response.text[:200]}")
             return False
     except requests.exceptions.RequestException as e:
-        print(f"Failed to connect to WAVE ROVER at {ROBOT_HTTP_ENDPOINT}: {e}")
+        print(f"Failed to connect to WAVE ROVER at {ROBOT_IP}: {e}")
         print("Make sure the robot is powered on and connected to its WiFi hotspot.")
         return False
 
 def send_motor_command_http(left_speed, right_speed):
-    """Sends a motor control command to the Waveshare Rover via WiFi HTTP."""
+    """Sends a motor control command to the Waveshare Rover via WiFi HTTP.
+    
+    The WAVE ROVER expects HTTP GET requests to /js endpoint with JSON command
+    as a query parameter: /js?json={"T":1,"L":0.3,"R":0.3}
+    """
     command_payload = {
         "T": 1,  # CMD_SPEED_CTRL command type
         "L": float(left_speed),
@@ -92,15 +101,19 @@ def send_motor_command_http(left_speed, right_speed):
     }
 
     try:
-        response = requests.post(ROBOT_HTTP_ENDPOINT,
-                                json=command_payload,
-                                timeout=HTTP_TIMEOUT)
-        print(f"Command sent via HTTP: {json.dumps(command_payload)}")
+        # WAVE ROVER expects GET request to /js?json=<command>
+        command_json = json.dumps(command_payload)
+        url = f"{ROBOT_HTTP_ENDPOINT}?json={command_json}"
+        
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        print(f"Command sent via HTTP: {command_json}")
+        print(f"URL: {url}")
+        print(f"Response status: {response.status_code}, body: {response.text[:200]}")
         
         if response.status_code == 200:
             return True, "OK"
         else:
-            return False, f"HTTP error: {response.status_code} - {response.text}"
+            return False, f"HTTP error: {response.status_code} - {response.text[:200]}"
     except requests.exceptions.Timeout:
         print(f"Timeout sending command to {ROBOT_HTTP_ENDPOINT}")
         return False, f"Request timeout after {HTTP_TIMEOUT} seconds"
@@ -109,6 +122,8 @@ def send_motor_command_http(left_speed, right_speed):
         return False, f"Connection error: {e}"
     except Exception as e:
         print(f"An unexpected error occurred during HTTP command send: {e}")
+        import traceback
+        traceback.print_exc()
         return False, f"Unexpected error: {e}"
 
 # --- Lifecycle Management ---
