@@ -49,11 +49,24 @@ def init_camera():
     """Initializes the camera using OpenCV VideoCapture (v4l2 compatible for RHEL 9)."""
     global camera
     try:
+        print(f"Attempting to initialize camera at {CAMERA_DEVICE}...")
+        
+        # Check if device exists
+        if not os.path.exists(CAMERA_DEVICE):
+            print(f"ERROR: Camera device {CAMERA_DEVICE} does not exist!")
+            print(f"Available video devices: {[f for f in os.listdir('/dev') if f.startswith('video')]}")
+            camera = None
+            return
+        
         # Try to open camera device
         camera = cv2.VideoCapture(CAMERA_DEVICE)
         
         if not camera.isOpened():
-            print(f"Failed to open camera device {CAMERA_DEVICE}")
+            print(f"ERROR: Failed to open camera device {CAMERA_DEVICE}")
+            print("Possible causes:")
+            print("  - Device is in use by another process")
+            print("  - Permission denied (user not in 'video' group)")
+            print("  - Device not accessible")
             camera = None
             return
         
@@ -61,19 +74,37 @@ def init_camera():
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
         
+        # Verify resolution was set
+        actual_width = camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+        actual_height = camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        print(f"Camera resolution set to: {int(actual_width)}x{int(actual_height)}")
+        
         # Read a test frame to ensure camera is working
         ret, frame = camera.read()
         if not ret:
-            print(f"Failed to read test frame from camera {CAMERA_DEVICE}")
+            print(f"ERROR: Failed to read test frame from camera {CAMERA_DEVICE}")
+            print("Camera opened but cannot read frames - may be a driver issue")
             camera.release()
             camera = None
             return
         
-        print(f"Camera {CAMERA_DEVICE} started successfully (resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT})")
-    except Exception as e:
-        print(f"Failed to start camera {CAMERA_DEVICE}: {e}")
-        if camera is not None:
+        if frame is None or frame.size == 0:
+            print(f"ERROR: Test frame is empty from camera {CAMERA_DEVICE}")
             camera.release()
+            camera = None
+            return
+        
+        print(f"✓ Camera {CAMERA_DEVICE} started successfully (resolution: {int(actual_width)}x{int(actual_height)})")
+        print(f"  Test frame captured: {frame.shape}")
+    except Exception as e:
+        print(f"ERROR: Failed to start camera {CAMERA_DEVICE}: {e}")
+        import traceback
+        traceback.print_exc()
+        if camera is not None:
+            try:
+                camera.release()
+            except:
+                pass
         camera = None
 
 # --- Helper Functions for WiFi HTTP Communication ---
