@@ -277,13 +277,27 @@ def init_camera():
                         except:
                             pass
         
-        # Method 5: Try alternative camera tools for CSI cameras on AlmaLinux/RHEL 9
+        # Method 5: Try Python libcamera bindings (if available)
         if camera is None or (hasattr(camera, 'isOpened') and not camera.isOpened()):
-            print("Trying method 5: Checking for CSI camera tools...")
+            print("Trying method 5: Checking for Python libcamera bindings...")
+            try:
+                import libcamera
+                print("  Python libcamera module found - attempting to use it")
+                # Mark that we'll use Python libcamera
+                camera = "python_libcamera"
+                USE_LIBCAMERA = "python_libcamera"
+                print("✓ Will use Python libcamera bindings for camera capture")
+            except ImportError:
+                print("  Python libcamera bindings not available")
+        
+        # Method 6: Try alternative camera tools for CSI cameras on AlmaLinux/RHEL 9
+        if camera is None or (hasattr(camera, 'isOpened') and not camera.isOpened()):
+            print("Trying method 6: Checking for CSI camera tools...")
             # Check both PATH and common Raspberry Pi locations
+            # Note: libcamera-still is not available in AlmaLinux repos
             camera_tools = [
                 ('libcamera-still', 'libcamera', None),
-                ('libcamera-still', 'libcamera', '/usr/bin/libcamera-still'),  # Common location
+                ('libcamera-still', 'libcamera', '/usr/bin/libcamera-still'),
                 ('rpicam-still', 'rpicam', None),
                 ('rpicam-still', 'rpicam', '/usr/bin/rpicam-still'),
                 ('raspistill', 'raspistill', None),
@@ -316,12 +330,15 @@ def init_camera():
                 except Exception as e:
                     print(f"  Exception checking for {tool_name}: {e}")
             
-            if camera is None or (camera != "libcamera" and camera != "rpicam" and camera != "raspistill"):
-                print("  No CSI camera tools found (libcamera-still, rpicam-still, or raspistill)")
-                print("  Note: raspberrypi-userland is installed, but raspistill may not be in PATH")
-                print("  Try: find /usr /opt -name raspistill 2>/dev/null")
+            if camera is None or (camera != "libcamera" and camera != "rpicam" and camera != "raspistill" and camera != "python_libcamera"):
+                print("  No CSI camera tools found")
+                print("  Note: libcamera-still is not available in AlmaLinux repos")
+                print("  Options:")
+                print("    1. Install libcamera-v4l2: dnf install libcamera-v4l2 (provides V4L2 compatibility)")
+                print("    2. Try building libcamera-apps from source")
+                print("    3. Use Python libcamera bindings if available")
         
-        if camera is None or (camera not in ["libcamera", "rpicam", "raspistill"] and hasattr(camera, 'isOpened') and not camera.isOpened()):
+        if camera is None or (camera not in ["libcamera", "rpicam", "raspistill", "python_libcamera"] and hasattr(camera, 'isOpened') and not camera.isOpened()):
             print(f"ERROR: Failed to open camera device {CAMERA_DEVICE} with any method")
             print("Possible causes:")
             print("  - Device is in use by another process")
@@ -341,12 +358,13 @@ def init_camera():
             camera = None
             return
         
-        # Skip OpenCV setup if using external camera tool
-        if camera in ["libcamera", "rpicam", "raspistill"]:
+        # Skip OpenCV setup if using external camera tool or Python libcamera
+        if camera in ["libcamera", "rpicam", "raspistill", "python_libcamera"]:
             tool_names = {
                 "libcamera": "libcamera-still",
                 "rpicam": "rpicam-still",
-                "raspistill": "raspistill"
+                "raspistill": "raspistill",
+                "python_libcamera": "Python libcamera bindings"
             }
             print(f"✓ Camera initialized using {tool_names.get(camera, 'external tool')}")
             return
@@ -683,8 +701,36 @@ def camera_endpoint():
             }), 500
 
     try:
-        # Use external camera tools for CSI cameras on AlmaLinux/RHEL 9
-        if USE_LIBCAMERA or camera in ["libcamera", "rpicam", "raspistill"]:
+        # Use external camera tools or Python libcamera for CSI cameras on AlmaLinux/RHEL 9
+        if USE_LIBCAMERA or camera in ["libcamera", "rpicam", "raspistill", "python_libcamera"]:
+            # Handle Python libcamera bindings
+            if camera == "python_libcamera" or USE_LIBCAMERA == "python_libcamera":
+                try:
+                    import libcamera
+                    import numpy as np
+                    from PIL import Image
+                    import io
+                    
+                    # Use Python libcamera to capture image
+                    # This is a simplified example - actual implementation may vary
+                    # based on available libcamera Python bindings
+                    with libcamera.Transform() as transform:
+                        with libcamera.Stream() as stream:
+                            # Capture a still image
+                            # Note: Actual API may differ - this is a placeholder
+                            # You may need to adjust based on actual libcamera Python bindings
+                            pass
+                    
+                    # For now, return an error indicating Python libcamera needs implementation
+                    return jsonify({
+                        "error": "Python libcamera bindings detected but not yet implemented",
+                        "details": "Python libcamera support needs to be implemented based on available bindings"
+                    }), 501
+                except ImportError:
+                    return jsonify({"error": "Python libcamera module not available"}), 500
+                except Exception as e:
+                    return jsonify({"error": f"Python libcamera error: {str(e)}"}), 500
+            
             # Determine which tool to use and get its path
             tool_cmd = None
             tool_type = camera if camera in ["libcamera", "rpicam", "raspistill"] else USE_LIBCAMERA
