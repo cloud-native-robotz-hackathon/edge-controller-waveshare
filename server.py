@@ -24,6 +24,15 @@ HTTP_TIMEOUT = 2.0  # Timeout in seconds for HTTP requests
 ROBOT_SPEED_CM_PER_SECOND = 10.0
 DEFAULT_DRIVE_SPEED = 0.3
 
+# --- Turn Configuration ---
+# Base turn rate: seconds per degree (calibrated for this robot)
+# Account for acceleration/deceleration time and HTTP latency
+# Observations: 3×45° ≈ 90°, so short turns need more time
+TURN_RATE_SECONDS_PER_DEGREE = 0.0072  # ~0.65 seconds per 90 degrees
+TURN_ACCELERATION_TIME = 0.08  # Time to reach full speed (seconds)
+TURN_DECELERATION_TIME = 0.08  # Time to stop (seconds)
+TURN_HTTP_LATENCY = 0.05  # Approximate HTTP request latency (seconds)
+
 # --- Camera Configuration ---
 # Camera device path (default /dev/video0 for first USB camera or CSI camera via v4l2)
 # Can be configured via environment variable CAMERA_DEVICE
@@ -203,10 +212,28 @@ def left(degree):
         return jsonify({"status": "Error", "message": "Degree must be positive"}), 400
     
     # Left turn in place: left wheel backward, right wheel forward
-    # Duration calculation: 0.65 seconds per 90 degrees
-    # Formula: duration = (degree / 90) * 0.65
-    duration = (degree / 90.0) * 0.65
-    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees.")
+    # Duration calculation accounts for acceleration/deceleration and HTTP latency
+    # Observations show short turns need proportionally more time
+    base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
+    overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
+    
+    # For short turns, overhead dominates - scale it inversely with degree
+    # For 45°: needs ~1.5x the base time to account for overhead
+    # For 90°: overhead is less significant
+    if degree <= 45:
+        # Short turns need significant overhead compensation
+        # Scale factor: 90/degree gives more time for shorter turns
+        scale_factor = 1.0 + (90.0 / degree) * 0.15
+        duration = base_duration * scale_factor + overhead
+    elif degree < 90:
+        # Medium turns need moderate overhead
+        scale_factor = 1.0 + (90.0 / degree) * 0.1
+        duration = base_duration * scale_factor + overhead
+    else:
+        # Longer turns: fixed overhead
+        duration = base_duration + overhead
+    
+    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
     # Start turning
     start_time = time.time()
@@ -234,10 +261,28 @@ def right(degree):
         return jsonify({"status": "Error", "message": "Degree must be positive"}), 400
     
     # Right turn in place: left wheel forward, right wheel backward
-    # Duration calculation: 0.65 seconds per 90 degrees
-    # Formula: duration = (degree / 90) * 0.65
-    duration = (degree / 90.0) * 0.65
-    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees.")
+    # Duration calculation accounts for acceleration/deceleration and HTTP latency
+    # Observations show short turns need proportionally more time
+    base_duration = degree * TURN_RATE_SECONDS_PER_DEGREE
+    overhead = TURN_ACCELERATION_TIME + TURN_DECELERATION_TIME + TURN_HTTP_LATENCY
+    
+    # For short turns, overhead dominates - scale it inversely with degree
+    # For 45°: needs ~1.5x the base time to account for overhead
+    # For 90°: overhead is less significant
+    if degree <= 45:
+        # Short turns need significant overhead compensation
+        # Scale factor: 90/degree gives more time for shorter turns
+        scale_factor = 1.0 + (90.0 / degree) * 0.15
+        duration = base_duration * scale_factor + overhead
+    elif degree < 90:
+        # Medium turns need moderate overhead
+        scale_factor = 1.0 + (90.0 / degree) * 0.1
+        duration = base_duration * scale_factor + overhead
+    else:
+        # Longer turns: fixed overhead
+        duration = base_duration + overhead
+    
+    print(f"Calculated duration: {duration:.3f} seconds for {degree} degrees (base: {base_duration:.3f}s).")
 
     # Start turning
     start_time = time.time()
